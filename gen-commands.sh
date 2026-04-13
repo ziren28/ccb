@@ -61,7 +61,7 @@ for g in $(seq 1 "$GROUPS"); do
         echo "--- 节点 ${g}-${n} (远程端口: ${PORT}) ---"
         echo ""
         cat << CMDEOF
-curl -fsSL https://raw.githubusercontent.com/YOUR_REPO/install-node.sh | bash -s -- \\
+curl -fsSL https://raw.githubusercontent.com/ziren28/ccb/main/install-node.sh | bash -s -- \\
   --group $g --node $n \\
   --server-ip $SERVER_IP \\
   --frp-token $FRP_TOKEN \\
