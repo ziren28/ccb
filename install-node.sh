@@ -104,6 +104,14 @@ case "$ARCH" in
 esac
 ok "架构: $ARCH ($CCB_ARCH)"
 
+# ---------- 安装依赖 ----------
+if [ -f /etc/debian_version ]; then
+    apt-get update -qq
+    apt-get install -y -qq curl ca-certificates supervisor postgresql-client 2>/dev/null
+elif [ -f /etc/redhat-release ]; then
+    yum install -y curl ca-certificates supervisor postgresql 2>/dev/null
+fi
+
 # ---------- 2. 创建目录 ----------
 mkdir -p /opt/ccb/data
 cd /opt/ccb
@@ -304,6 +312,33 @@ STOPEOF
     sleep 3
     ok "进程已后台启动"
 fi
+
+# ---------- 修复 PG 表类型 (TIMESTAMPTZ → TEXT) ----------
+info "修复数据库 schema..."
+export PGPASSWORD="${PG_PASS}"
+psql -h "${SERVER_IP}" -U postgres -d "${DB_NAME}" -c "
+DO \$\$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND data_type='timestamp with time zone') THEN
+    ALTER TABLE accounts
+      ALTER COLUMN created_at TYPE TEXT USING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      ALTER COLUMN oauth_expires_at TYPE TEXT USING to_char(oauth_expires_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      ALTER COLUMN oauth_refreshed_at TYPE TEXT USING to_char(oauth_refreshed_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      ALTER COLUMN rate_limited_at TYPE TEXT USING to_char(rate_limited_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      ALTER COLUMN rate_limit_reset_at TYPE TEXT USING to_char(rate_limit_reset_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+    ALTER TABLE accounts ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+    ALTER TABLE accounts ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_tokens' AND data_type='timestamp with time zone') THEN
+    ALTER TABLE api_tokens
+      ALTER COLUMN created_at TYPE TEXT USING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
+      ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+    ALTER TABLE api_tokens ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+    ALTER TABLE api_tokens ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+  END IF;
+END \$\$;
+" 2>/dev/null && ok "Schema 已修复" || info "Schema 修复跳过 (可能表未创建)"
+unset PGPASSWORD
 
 # ---------- 8. 验证 ----------
 echo ""
