@@ -52,13 +52,14 @@ echo "=========================================================="
 echo ""
 
 for g in $(seq 1 "$GROUPS"); do
+    PORT=$((5000 + g))
     echo "==========================================="
-    echo "  节点组 $g  (数据库: ccb_g${g}, Redis DB: $((g-1)))"
+    echo "  组 $g  (端口: ${PORT}, 数据库: ccb_g${g}, Redis DB: $((g-1)))"
+    echo "  同组节点共享端口，同时只有一台在线"
     echo "==========================================="
     echo ""
     for n in $(seq 1 "$NODES_PER_GROUP"); do
-        PORT=$((5000 + (g - 1) * 10 + n))
-        echo "--- 节点 ${g}-${n} (远程端口: ${PORT}) ---"
+        echo "--- 节点 ${g}-${n} ---"
         echo ""
         cat << CMDEOF
 curl -fsSL https://raw.githubusercontent.com/ziren28/ccb/main/install-node.sh | bash -s -- \\
@@ -70,27 +71,14 @@ curl -fsSL https://raw.githubusercontent.com/ziren28/ccb/main/install-node.sh | 
   --admin-pass $ADMIN_PASS
 CMDEOF
         echo ""
-        echo "# 或手动执行 (先将 install-node.sh 传到节点):"
-        echo "bash install-node.sh --group $g --node $n --server-ip $SERVER_IP --frp-token $FRP_TOKEN --pg-pass $PG_PASS --redis-pass $REDIS_PASS --admin-pass $ADMIN_PASS"
-        echo ""
     done
 done
 
 echo "==========================================="
-echo "  端口分配表"
+echo "  端口分配表 (每组一个端口)"
 echo "==========================================="
-printf "  %-6s" ""
-for n in $(seq 1 "$NODES_PER_GROUP"); do
-    printf "  节点%-2s" "$n"
-done
-echo ""
-
 for g in $(seq 1 "$GROUPS"); do
-    printf "  组%-3s" "$g"
-    for n in $(seq 1 "$NODES_PER_GROUP"); do
-        PORT=$((5000 + (g - 1) * 10 + n))
-        printf "  %-6s" ":$PORT"
-    done
-    echo ""
+    PORT=$((5000 + g))
+    echo "  组${g}  →  :${PORT}  (${NODES_PER_GROUP} 个节点轮换)"
 done
 echo "==========================================="

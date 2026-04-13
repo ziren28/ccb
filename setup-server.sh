@@ -13,7 +13,7 @@ REDIS_PASSWORD="ccb_redis_2026"
 FRP_TOKEN="ccb_frp_token_2026"
 FRP_VERSION="0.61.1"
 FRP_BIND_PORT=7000
-FRP_ALLOW_PORTS="5001-5100"
+FRP_ALLOW_PORTS="5001-5100"   # 组1=5001, 组2=5002, ..., 组10=5010
 # ============================
 
 COLOR_GREEN='\033[0;32m'

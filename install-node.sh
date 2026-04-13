@@ -72,7 +72,7 @@ if [ "$NODE" -lt 1 ] || [ "$NODE" -gt 5 ] 2>/dev/null; then
     fail "--node 范围 1~5"; exit 1
 fi
 
-REMOTE_PORT=$((5000 + (GROUP - 1) * 10 + NODE))
+REMOTE_PORT=$((5000 + GROUP))
 DB_NAME="ccb_g${GROUP}"
 REDIS_DB=$((GROUP - 1))
 NODE_NAME="ccb-g${GROUP}-n${NODE}"
