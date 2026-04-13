@@ -166,14 +166,14 @@ pkill -f "claude-code-gateway" 2>/dev/null
 pkill -f "frpc.*frpc.toml$" 2>/dev/null
 sleep 1
 
-# 加载配置：如果 supervisor 已在运行就 reload，否则启动
-if supervisorctl status &>/dev/null; then
+# 加载配置：检测 supervisor 是否已在运行
+if pgrep -x supervisord &>/dev/null; then
     supervisorctl reread
     supervisorctl update
-    supervisorctl restart ccb-gateway ccb-frpc
-    [ -n "$SSH_PORT" ] && supervisorctl restart ccb-sshd ccb-frpc-ssh
+    supervisorctl restart ccb-gateway ccb-frpc 2>/dev/null || supervisorctl start ccb-gateway ccb-frpc
+    [ -n "$SSH_PORT" ] && { supervisorctl restart ccb-sshd ccb-frpc-ssh 2>/dev/null || supervisorctl start ccb-sshd ccb-frpc-ssh; }
 else
-    supervisord -c /etc/supervisor/supervisord.conf
+    supervisord -c /etc/supervisor/supervisord.conf &
 fi
 
 sleep 3
