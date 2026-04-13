@@ -156,7 +156,7 @@ fi
 # ---------- 5. 写入 .env ----------
 info "写入配置..."
 cat > /opt/ccb/.env << ENVEOF
-DATABASE_DRIVER=postgres
+DATABASE_DRIVER=postgresql
 DATABASE_HOST=${SERVER_IP}
 DATABASE_PORT=5432
 DATABASE_USER=postgres
