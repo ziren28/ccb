@@ -129,16 +129,10 @@ else
 
     info "下载 $CCB_DL_URL ..."
     curl -fsSL "$CCB_DL_URL" -o /tmp/ccb.tar.gz
-    tar xzf /tmp/ccb.tar.gz -C /tmp/
-    # 找到解压出的二进制并移动到 /opt/ccb/
-    find /tmp -name "claude-code-gateway" -type f 2>/dev/null | head -1 | xargs -I{} cp {} /opt/ccb/claude-code-gateway
-    if [ ! -f /opt/ccb/claude-code-gateway ]; then
-        # 可能直接解压到当前目录
-        cp /tmp/${CCB_DL_NAME}/claude-code-gateway /opt/ccb/claude-code-gateway 2>/dev/null || \
-        cp /tmp/claude-code-gateway /opt/ccb/claude-code-gateway 2>/dev/null || \
-        { fail "无法找到解压后的二进制文件"; exit 1; }
-    fi
-    rm -rf /tmp/ccb.tar.gz /tmp/${CCB_DL_NAME} /tmp/claude-code-gateway
+    tar xzf /tmp/ccb.tar.gz -C /opt/ccb/
+    # 解压出的文件名带架构后缀，重命名为统一名称
+    mv /opt/ccb/${CCB_DL_NAME} /opt/ccb/claude-code-gateway
+    rm -f /tmp/ccb.tar.gz
     chmod +x /opt/ccb/claude-code-gateway
     ok "CC-Bridge 下载完成"
 fi
