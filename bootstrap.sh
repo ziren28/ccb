@@ -37,12 +37,12 @@ case "$ARCH" in x86_64) A="amd64";; aarch64) A="arm64";; *) echo "不支持: $AR
 
 mkdir -p /opt/ccb/data
 
-# 安装依赖 + supervisor
+# 安装依赖
 if [ -f /etc/debian_version ]; then
     apt-get update -qq
-    apt-get install -y -qq curl ca-certificates supervisor
+    apt-get install -y -qq curl ca-certificates supervisor 2>/dev/null
 else
-    yum install -y curl ca-certificates supervisor
+    yum install -y curl ca-certificates supervisor 2>/dev/null
 fi
 
 # 下载 CC-Bridge
@@ -120,14 +120,14 @@ remotePort = ${SSH_PORT}
 EOF
 
     SSH_SUPERVISOR="
-[program:sshd]
+[program:ccb-sshd]
 command=/usr/sbin/sshd -D
 autostart=true
 autorestart=true
 stdout_logfile=/opt/ccb/data/sshd.log
 stderr_logfile=/opt/ccb/data/sshd.log
 
-[program:frpc-ssh]
+[program:ccb-frpc-ssh]
 command=/opt/ccb/frpc -c /opt/ccb/frpc-ssh.toml
 autostart=true
 autorestart=true
@@ -137,11 +137,12 @@ stderr_logfile=/opt/ccb/data/frpc-ssh.log"
 fi
 
 # 写 supervisor 配置
+ENV_LINE=$(grep -v '^#' /opt/ccb/.env | tr '\n' ',' | sed 's/,$//')
 cat > /etc/supervisor/conf.d/ccb.conf << EOF
-[program:ccb]
+[program:ccb-gateway]
 command=/opt/ccb/claude-code-gateway
 directory=/opt/ccb
-environment=$(grep -v '^#' /opt/ccb/.env | tr '\n' ',' | sed 's/,$//')
+environment=${ENV_LINE}
 autostart=true
 autorestart=true
 startsecs=5
@@ -149,7 +150,7 @@ startretries=999
 stdout_logfile=/opt/ccb/data/ccb.log
 stderr_logfile=/opt/ccb/data/ccb.log
 
-[program:frpc]
+[program:ccb-frpc]
 command=/opt/ccb/frpc -c /opt/ccb/frpc.toml
 autostart=true
 autorestart=true
@@ -160,7 +161,22 @@ stderr_logfile=/opt/ccb/data/frpc.log
 ${SSH_SUPERVISOR}
 EOF
 
-# 启动 supervisor
+# 停掉可能冲突的旧进程
+pkill -f "claude-code-gateway" 2>/dev/null
+pkill -f "frpc.*frpc.toml$" 2>/dev/null
+sleep 1
+
+# 加载配置：如果 supervisor 已在运行就 reload，否则启动
+if supervisorctl status &>/dev/null; then
+    supervisorctl reread
+    supervisorctl update
+    supervisorctl restart ccb-gateway ccb-frpc
+    [ -n "$SSH_PORT" ] && supervisorctl restart ccb-sshd ccb-frpc-ssh
+else
+    supervisord -c /etc/supervisor/supervisord.conf
+fi
+
+sleep 3
 echo ""
 echo "========================================="
 echo "  节点: ${NODE_NAME}"
@@ -169,5 +185,4 @@ echo "  密码: ${ADMIN_PASS}"
 [ -n "$SSH_PORT" ] && echo "  SSH:  ssh -p ${SSH_PORT} root@${SERVER_IP}"
 echo "========================================="
 echo ""
-
-exec supervisord -n -c /etc/supervisor/supervisord.conf
+supervisorctl status | grep ccb
