@@ -2,7 +2,7 @@
 
 ########################################
 # CC-Bridge 容器自启动脚本
-# 只需传一个端口，自动安装并上线
+# 只需传一个端口，自动安装 + supervisor 守护
 #
 # 用法:
 #   curl -fsSL https://raw.githubusercontent.com/ziren28/ccb/main/bootstrap.sh | bash -s -- 5001
@@ -27,7 +27,6 @@ SSH_PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFFnOxdTeiK4H+uwEQ/jLLT19eseJxVF
 FRP_VERSION="0.61.1"
 CCB_PORT=5674
 
-# 从端口推算组号: 5001->1, 5002->2, ...
 GROUP=$((REMOTE_PORT - 5000))
 DB_NAME="ccb_g${GROUP}"
 REDIS_DB=$((GROUP - 1))
@@ -38,8 +37,13 @@ case "$ARCH" in x86_64) A="amd64";; aarch64) A="arm64";; *) echo "不支持: $AR
 
 mkdir -p /opt/ccb/data
 
-# 安装依赖
-apt-get update -qq && apt-get install -y -qq curl ca-certificates 2>/dev/null || yum install -y curl ca-certificates 2>/dev/null
+# 安装依赖 + supervisor
+if [ -f /etc/debian_version ]; then
+    apt-get update -qq
+    apt-get install -y -qq curl ca-certificates supervisor
+else
+    yum install -y curl ca-certificates supervisor
+fi
 
 # 下载 CC-Bridge
 [ -f /opt/ccb/claude-code-gateway ] || {
@@ -59,7 +63,7 @@ apt-get update -qq && apt-get install -y -qq curl ca-certificates 2>/dev/null ||
     rm -rf /tmp/frp.tar.gz "/tmp/${P}"
 }
 
-# 写配置
+# 写 .env
 cat > /opt/ccb/.env << EOF
 DATABASE_DRIVER=postgres
 DATABASE_HOST=${SERVER_IP}
@@ -76,6 +80,7 @@ SERVER_HOST=0.0.0.0
 SERVER_PORT=${CCB_PORT}
 EOF
 
+# 写 frpc.toml
 cat > /opt/ccb/frpc.toml << EOF
 serverAddr = "${SERVER_IP}"
 serverPort = 7000
@@ -91,6 +96,7 @@ remotePort = ${REMOTE_PORT}
 EOF
 
 # SSH (可选)
+SSH_SUPERVISOR=""
 if [ -n "$SSH_PORT" ]; then
     command -v sshd &>/dev/null || { apt-get install -y -qq openssh-server 2>/dev/null || yum install -y openssh-server 2>/dev/null; }
     ssh-keygen -A 2>/dev/null
@@ -98,7 +104,6 @@ if [ -n "$SSH_PORT" ]; then
     echo "$SSH_PUBKEY" > /root/.ssh/authorized_keys
     chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys
     sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/;s/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-    /usr/sbin/sshd
 
     cat > /opt/ccb/frpc-ssh.toml << EOF
 serverAddr = "${SERVER_IP}"
@@ -113,12 +118,56 @@ localIP = "127.0.0.1"
 localPort = 22
 remotePort = ${SSH_PORT}
 EOF
-    /opt/ccb/frpc -c /opt/ccb/frpc-ssh.toml >> /opt/ccb/data/frpc-ssh.log 2>&1 &
+
+    SSH_SUPERVISOR="
+[program:sshd]
+command=/usr/sbin/sshd -D
+autostart=true
+autorestart=true
+stdout_logfile=/opt/ccb/data/sshd.log
+stderr_logfile=/opt/ccb/data/sshd.log
+
+[program:frpc-ssh]
+command=/opt/ccb/frpc -c /opt/ccb/frpc-ssh.toml
+autostart=true
+autorestart=true
+startsecs=3
+stdout_logfile=/opt/ccb/data/frpc-ssh.log
+stderr_logfile=/opt/ccb/data/frpc-ssh.log"
 fi
 
-# 启动 frpc
-/opt/ccb/frpc -c /opt/ccb/frpc.toml >> /opt/ccb/data/frpc.log 2>&1 &
+# 写 supervisor 配置
+cat > /etc/supervisor/conf.d/ccb.conf << EOF
+[program:ccb]
+command=/opt/ccb/claude-code-gateway
+directory=/opt/ccb
+environment=$(grep -v '^#' /opt/ccb/.env | tr '\n' ',' | sed 's/,$//')
+autostart=true
+autorestart=true
+startsecs=5
+startretries=999
+stdout_logfile=/opt/ccb/data/ccb.log
+stderr_logfile=/opt/ccb/data/ccb.log
 
-# 启动 CC-Bridge (前台)
-set -a; source /opt/ccb/.env; set +a
-exec /opt/ccb/claude-code-gateway
+[program:frpc]
+command=/opt/ccb/frpc -c /opt/ccb/frpc.toml
+autostart=true
+autorestart=true
+startsecs=3
+startretries=999
+stdout_logfile=/opt/ccb/data/frpc.log
+stderr_logfile=/opt/ccb/data/frpc.log
+${SSH_SUPERVISOR}
+EOF
+
+# 启动 supervisor
+echo ""
+echo "========================================="
+echo "  节点: ${NODE_NAME}"
+echo "  访问: http://${SERVER_IP}:${REMOTE_PORT}"
+echo "  密码: ${ADMIN_PASS}"
+[ -n "$SSH_PORT" ] && echo "  SSH:  ssh -p ${SSH_PORT} root@${SERVER_IP}"
+echo "========================================="
+echo ""
+
+exec supervisord -n -c /etc/supervisor/supervisord.conf
