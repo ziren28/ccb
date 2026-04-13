@@ -83,7 +83,7 @@ done
 
 # 修复 sqlx Any 驱动不支持 TIMESTAMPTZ 的问题
 # CC-Bridge 用 AnyPool 查询，需要时间列为 TEXT 类型
-info "修复数据库 schema (TIMESTAMPTZ → TEXT)..."
+info "修复数据库 schema (TIMESTAMPTZ/JSONB → TEXT)..."
 for i in $(seq 1 10); do
     DB_NAME="ccb_g${i}"
     su - postgres -c "psql -d $DB_NAME -c \"
@@ -105,6 +105,16 @@ for i in $(seq 1 10); do
                     ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
                 ALTER TABLE api_tokens ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
                 ALTER TABLE api_tokens ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='canonical_env' AND data_type='jsonb') THEN
+                ALTER TABLE accounts
+                    ALTER COLUMN canonical_env TYPE TEXT USING canonical_env::TEXT,
+                    ALTER COLUMN canonical_prompt_env TYPE TEXT USING canonical_prompt_env::TEXT,
+                    ALTER COLUMN canonical_process TYPE TEXT USING canonical_process::TEXT;
+                ALTER TABLE accounts
+                    ALTER COLUMN canonical_env SET DEFAULT '{}',
+                    ALTER COLUMN canonical_prompt_env SET DEFAULT '{}',
+                    ALTER COLUMN canonical_process SET DEFAULT '{}';
             END IF;
         END \\\$\\\$;
     \"" 2>/dev/null

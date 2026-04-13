@@ -188,6 +188,16 @@ DO \$\$ BEGIN
     ALTER TABLE api_tokens ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
     ALTER TABLE api_tokens ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
   END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='canonical_env' AND data_type='jsonb') THEN
+    ALTER TABLE accounts
+      ALTER COLUMN canonical_env TYPE TEXT USING canonical_env::TEXT,
+      ALTER COLUMN canonical_prompt_env TYPE TEXT USING canonical_prompt_env::TEXT,
+      ALTER COLUMN canonical_process TYPE TEXT USING canonical_process::TEXT;
+    ALTER TABLE accounts
+      ALTER COLUMN canonical_env SET DEFAULT '{}',
+      ALTER COLUMN canonical_prompt_env SET DEFAULT '{}',
+      ALTER COLUMN canonical_process SET DEFAULT '{}';
+  END IF;
 END \$\$;
 " 2>/dev/null && echo "DB schema 已修复" || echo "DB schema 修复跳过"
 unset PGPASSWORD
