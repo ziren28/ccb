@@ -40,9 +40,9 @@ mkdir -p /opt/ccb/data
 # 安装依赖
 if [ -f /etc/debian_version ]; then
     apt-get update -qq
-    apt-get install -y -qq curl ca-certificates supervisor postgresql-client 2>/dev/null
+    apt-get install -y -qq curl ca-certificates supervisor 2>/dev/null
 else
-    yum install -y curl ca-certificates supervisor postgresql 2>/dev/null
+    yum install -y curl ca-certificates supervisor 2>/dev/null
 fi
 
 # 下载 CC-Bridge
@@ -166,41 +166,6 @@ pkill -f "claude-code-gateway" 2>/dev/null
 pkill -f "frpc.*frpc.toml$" 2>/dev/null
 sleep 1
 
-# 修复 PG 表类型 (CC-Bridge 建表用 TIMESTAMPTZ，sqlx Any 驱动不支持)
-export PGPASSWORD="${PG_PASS}"
-psql -h "${SERVER_IP}" -U postgres -d "${DB_NAME}" -c "
-DO \$\$ BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND data_type='timestamp with time zone') THEN
-    ALTER TABLE accounts
-      ALTER COLUMN created_at TYPE TEXT USING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      ALTER COLUMN oauth_expires_at TYPE TEXT USING to_char(oauth_expires_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      ALTER COLUMN oauth_refreshed_at TYPE TEXT USING to_char(oauth_refreshed_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      ALTER COLUMN rate_limited_at TYPE TEXT USING to_char(rate_limited_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      ALTER COLUMN rate_limit_reset_at TYPE TEXT USING to_char(rate_limit_reset_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-    ALTER TABLE accounts ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-    ALTER TABLE accounts ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='api_tokens' AND data_type='timestamp with time zone') THEN
-    ALTER TABLE api_tokens
-      ALTER COLUMN created_at TYPE TEXT USING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-      ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-    ALTER TABLE api_tokens ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-    ALTER TABLE api_tokens ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-  END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='canonical_env' AND data_type='jsonb') THEN
-    ALTER TABLE accounts
-      ALTER COLUMN canonical_env TYPE TEXT USING canonical_env::TEXT,
-      ALTER COLUMN canonical_prompt_env TYPE TEXT USING canonical_prompt_env::TEXT,
-      ALTER COLUMN canonical_process TYPE TEXT USING canonical_process::TEXT;
-    ALTER TABLE accounts
-      ALTER COLUMN canonical_env SET DEFAULT '{}',
-      ALTER COLUMN canonical_prompt_env SET DEFAULT '{}',
-      ALTER COLUMN canonical_process SET DEFAULT '{}';
-  END IF;
-END \$\$;
-" 2>/dev/null && echo "DB schema 已修复" || echo "DB schema 修复跳过"
-unset PGPASSWORD
 
 # 加载配置：检测 supervisor 是否已在运行
 if pgrep -x supervisord &>/dev/null; then

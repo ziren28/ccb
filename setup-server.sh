@@ -13,7 +13,7 @@ REDIS_PASSWORD="ccb_redis_2026"
 FRP_TOKEN="ccb_frp_token_2026"
 FRP_VERSION="0.61.1"
 FRP_BIND_PORT=7000
-FRP_ALLOW_PORTS="5001-5100"   # 组1=5001, 组2=5002, ..., 组10=5010
+FRP_ALLOW_PORTS="5001-5100"
 # ============================
 
 COLOR_GREEN='\033[0;32m'
@@ -80,46 +80,6 @@ for i in $(seq 1 10); do
         && info "  $DB_NAME 已存在" \
         || { su - postgres -c "psql -c \"CREATE DATABASE $DB_NAME;\"" 2>/dev/null && ok "  $DB_NAME 已创建"; }
 done
-
-# 修复 sqlx Any 驱动不支持 TIMESTAMPTZ 的问题
-# CC-Bridge 用 AnyPool 查询，需要时间列为 TEXT 类型
-info "修复数据库 schema (TIMESTAMPTZ/JSONB → TEXT)..."
-for i in $(seq 1 10); do
-    DB_NAME="ccb_g${i}"
-    su - postgres -c "psql -d $DB_NAME -c \"
-        DO \\\$\\\$ BEGIN
-            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='accounts') THEN
-                ALTER TABLE accounts
-                    ALTER COLUMN created_at TYPE TEXT USING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                    ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                    ALTER COLUMN oauth_expires_at TYPE TEXT USING to_char(oauth_expires_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                    ALTER COLUMN oauth_refreshed_at TYPE TEXT USING to_char(oauth_refreshed_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                    ALTER COLUMN rate_limited_at TYPE TEXT USING to_char(rate_limited_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                    ALTER COLUMN rate_limit_reset_at TYPE TEXT USING to_char(rate_limit_reset_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-                ALTER TABLE accounts ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-                ALTER TABLE accounts ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-            END IF;
-            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='api_tokens') THEN
-                ALTER TABLE api_tokens
-                    ALTER COLUMN created_at TYPE TEXT USING to_char(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                    ALTER COLUMN updated_at TYPE TEXT USING to_char(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-                ALTER TABLE api_tokens ALTER COLUMN created_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-                ALTER TABLE api_tokens ALTER COLUMN updated_at SET DEFAULT to_char(NOW(), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');
-            END IF;
-            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='canonical_env' AND data_type='jsonb') THEN
-                ALTER TABLE accounts
-                    ALTER COLUMN canonical_env TYPE TEXT USING canonical_env::TEXT,
-                    ALTER COLUMN canonical_prompt_env TYPE TEXT USING canonical_prompt_env::TEXT,
-                    ALTER COLUMN canonical_process TYPE TEXT USING canonical_process::TEXT;
-                ALTER TABLE accounts
-                    ALTER COLUMN canonical_env SET DEFAULT '{}',
-                    ALTER COLUMN canonical_prompt_env SET DEFAULT '{}',
-                    ALTER COLUMN canonical_process SET DEFAULT '{}';
-            END IF;
-        END \\\$\\\$;
-    \"" 2>/dev/null
-done
-ok "Schema 修复完成"
 
 # 配置远程访问
 PG_CONF_DIR=$(su - postgres -c "psql -tc \"SHOW config_file;\"" | xargs dirname)
