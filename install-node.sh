@@ -188,9 +188,17 @@ remotePort = ${REMOTE_PORT}
 FRPCEOF
 ok "frpc.toml 已写入"
 
-# ---------- 7. 创建 systemd 服务 ----------
-# CC-Bridge service
-cat > /etc/systemd/system/ccb.service << 'SVCEOF'
+# ---------- 7. 检测运行环境并启动 ----------
+HAS_SYSTEMD=false
+if pidof systemd &>/dev/null && systemctl --version &>/dev/null; then
+    HAS_SYSTEMD=true
+fi
+
+if $HAS_SYSTEMD; then
+    # ---- systemd 环境 ----
+    info "检测到 systemd，创建服务..."
+
+    cat > /etc/systemd/system/ccb.service << 'SVCEOF'
 [Unit]
 Description=CC-Bridge (Claude Code Gateway)
 After=network.target
@@ -208,8 +216,7 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 SVCEOF
 
-# frpc service
-cat > /etc/systemd/system/ccb-frpc.service << 'SVCEOF'
+    cat > /etc/systemd/system/ccb-frpc.service << 'SVCEOF'
 [Unit]
 Description=frpc for CC-Bridge
 After=network.target
@@ -224,43 +231,105 @@ RestartSec=5
 WantedBy=multi-user.target
 SVCEOF
 
-systemctl daemon-reload
-ok "systemd 服务已创建"
+    systemctl daemon-reload
+    systemctl enable ccb ccb-frpc
+    systemctl restart ccb
+    sleep 2
+    systemctl restart ccb-frpc
+    sleep 2
+    ok "systemd 服务已启动"
+else
+    # ---- 容器环境 (无 systemd) ----
+    info "未检测到 systemd (容器环境)，使用进程方式启动..."
 
-# ---------- 8. 启动服务 ----------
-info "启动服务..."
-systemctl enable ccb ccb-frpc
-systemctl restart ccb
-sleep 2
-systemctl restart ccb-frpc
-sleep 2
-ok "服务已启动"
+    # 创建启动脚本，同时管理两个进程
+    cat > /opt/ccb/start.sh << 'STARTEOF'
+#!/bin/bash
+set -a
+source /opt/ccb/.env
+set +a
 
-# ---------- 9. 验证 ----------
+# 启动 CC-Bridge
+/opt/ccb/claude-code-gateway >> /opt/ccb/data/ccb.log 2>&1 &
+CCB_PID=$!
+echo $CCB_PID > /opt/ccb/data/ccb.pid
+echo "[$(date)] CC-Bridge started (PID: $CCB_PID)"
+
+sleep 2
+
+# 启动 frpc
+/opt/ccb/frpc -c /opt/ccb/frpc.toml >> /opt/ccb/data/frpc.log 2>&1 &
+FRPC_PID=$!
+echo $FRPC_PID > /opt/ccb/data/frpc.pid
+echo "[$(date)] frpc started (PID: $FRPC_PID)"
+
+# 捕获信号，优雅退出
+trap "kill $CCB_PID $FRPC_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+
+# 等待任一进程退出则全部重启
+while true; do
+    if ! kill -0 $CCB_PID 2>/dev/null; then
+        echo "[$(date)] CC-Bridge 进程退出，重启..."
+        set -a; source /opt/ccb/.env; set +a
+        /opt/ccb/claude-code-gateway >> /opt/ccb/data/ccb.log 2>&1 &
+        CCB_PID=$!
+        echo $CCB_PID > /opt/ccb/data/ccb.pid
+    fi
+    if ! kill -0 $FRPC_PID 2>/dev/null; then
+        echo "[$(date)] frpc 进程退出，重启..."
+        /opt/ccb/frpc -c /opt/ccb/frpc.toml >> /opt/ccb/data/frpc.log 2>&1 &
+        FRPC_PID=$!
+        echo $FRPC_PID > /opt/ccb/data/frpc.pid
+    fi
+    sleep 3
+done
+STARTEOF
+    chmod +x /opt/ccb/start.sh
+
+    # 创建停止脚本
+    cat > /opt/ccb/stop.sh << 'STOPEOF'
+#!/bin/bash
+[ -f /opt/ccb/data/ccb.pid ] && kill $(cat /opt/ccb/data/ccb.pid) 2>/dev/null
+[ -f /opt/ccb/data/frpc.pid ] && kill $(cat /opt/ccb/data/frpc.pid) 2>/dev/null
+pkill -f "start.sh" 2>/dev/null
+echo "已停止所有 CCB 服务"
+STOPEOF
+    chmod +x /opt/ccb/stop.sh
+
+    # 停掉旧进程（如果有）
+    bash /opt/ccb/stop.sh 2>/dev/null
+
+    # 启动
+    nohup bash /opt/ccb/start.sh >> /opt/ccb/data/start.log 2>&1 &
+    sleep 3
+    ok "进程已后台启动"
+fi
+
+# ---------- 8. 验证 ----------
 echo ""
 echo "========================================="
 echo "         部署验证"
 echo "========================================="
 
 PASS=0
-TOTAL=4
+TOTAL=3
 
 # 检查 ccb 进程
-if systemctl is-active ccb &>/dev/null; then
+if pgrep -f "claude-code-gateway" &>/dev/null; then
     ok "CC-Bridge 进程正常"
     PASS=$((PASS + 1))
 else
     fail "CC-Bridge 未运行"
-    journalctl -u ccb --no-pager -n 5
+    if $HAS_SYSTEMD; then journalctl -u ccb --no-pager -n 5; fi
 fi
 
 # 检查 frpc 进程
-if systemctl is-active ccb-frpc &>/dev/null; then
+if pgrep -f "frpc" &>/dev/null; then
     ok "frpc 进程正常"
     PASS=$((PASS + 1))
 else
     fail "frpc 未运行"
-    journalctl -u ccb-frpc --no-pager -n 5
+    if $HAS_SYSTEMD; then journalctl -u ccb-frpc --no-pager -n 5; fi
 fi
 
 # 检查本地端口
@@ -270,14 +339,6 @@ if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${CCB_PORT}" 2>/dev/
     PASS=$((PASS + 1))
 else
     fail "CC-Bridge 本地端口 ${CCB_PORT} 不可达"
-fi
-
-# 检查 frpc 隧道日志
-if journalctl -u ccb-frpc --no-pager -n 20 2>/dev/null | grep -qi "start proxy success\|connected"; then
-    ok "frpc 隧道已连通 → 主服务器:${REMOTE_PORT}"
-    PASS=$((PASS + 1))
-else
-    fail "frpc 隧道未确认连通 (可能延迟，请稍后检查)"
 fi
 
 echo ""
@@ -290,9 +351,16 @@ echo "  本地访问:     http://127.0.0.1:${CCB_PORT}"
 echo "  远程访问:     http://${SERVER_IP}:${REMOTE_PORT}"
 echo "  管理密码:     $ADMIN_PASS"
 echo ""
+if $HAS_SYSTEMD; then
 echo "  管理命令:"
-echo "    systemctl status ccb        # 查看 CC-Bridge 状态"
-echo "    systemctl status ccb-frpc   # 查看 frpc 状态"
-echo "    systemctl restart ccb       # 重启 CC-Bridge"
+echo "    systemctl status ccb        # 查看状态"
+echo "    systemctl restart ccb       # 重启"
 echo "    journalctl -u ccb -f        # 查看日志"
+else
+echo "  管理命令 (容器环境):"
+echo "    bash /opt/ccb/start.sh      # 前台启动 (适合容器 CMD)"
+echo "    bash /opt/ccb/stop.sh       # 停止所有服务"
+echo "    tail -f /opt/ccb/data/ccb.log   # CC-Bridge 日志"
+echo "    tail -f /opt/ccb/data/frpc.log  # frpc 日志"
+fi
 echo "========================================="
